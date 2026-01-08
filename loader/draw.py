@@ -1,7 +1,7 @@
 import pygame
 import math
 
-from loader import DEFAULT_FONT_SIZE
+DEFAULT_FONT_SIZE = 8
 
 pygame.init()
 
@@ -51,13 +51,43 @@ class Render:
 
     def __init__(self, schematic):
         self.screen = pygame.display.set_mode((1920, 1080))
+        self.clock = pygame.time.Clock()
+
         self.schematics = [schematic]
 
         self.static_components = []
         self.__pregenerate()
 
         self.pan_offset = [0, 0]
+        self.zoom = 1.0
+        self.MIN_ZOOM = 0.2
+        self.MAX_ZOOM = 5.0
+
         self.mouse_dragging = False
+
+    def blit_scaled(self, surface, xy):
+        scaled = pygame.transform.scale(
+            surface,
+            (int(surface.get_width() * self.zoom),
+             int(surface.get_height() * self.zoom))
+        )
+
+        x, y = xy
+        sx, sy = self.world_to_screen(x, y)
+
+        self.screen.blit(scaled, (sx, sy))
+
+    def screen_to_world(self, x, y):
+        return (
+            (x - self.pan_offset[0]) / self.zoom,
+            (y - self.pan_offset[1]) / self.zoom
+        )
+
+    def world_to_screen(self, x, y):  # Surely if I use the same function for everything it will work - WRONG
+        return (
+            (x * self.zoom) + self.pan_offset[0],
+            (y * self.zoom) + self.pan_offset[1]
+        )
 
     @property
     def schematic(self):
@@ -69,13 +99,13 @@ class Render:
             self.__pregenerate()
 
     def add_one_schematic(self, schematic):
-        print(schematic.path)
         self.schematics.append(schematic)
         self.__pregenerate()
 
     def __pregenerate(self):
         self.pan_offset = [0, 0]
         self.static_components = []
+        self.zoom = 1
 
         self.display_loading_screen(0, None)
         components = self.schematic.components
@@ -196,13 +226,7 @@ class Render:
 
                         surface.blit(text_surf, (x, y))
 
-
-
-
-
         return surface
-
-
 
 
     def display_loading_screen(self, percent_completed: float, preview):
@@ -233,6 +257,7 @@ class Render:
             self.screen.blit(preview, ((self.screen.get_width() - preview.get_width()) // 2, (self.screen.get_height() // 2) + 25))
 
         pygame.display.flip()
+        self.clock.tick(120)
 
     def update(self):
         for event in pygame.event.get():
@@ -255,7 +280,10 @@ class Render:
                     self.mouse_dragging = False
                     continue
 
-                x, y = event.pos[0] - self.pan_offset[0], event.pos[1] - self.pan_offset[1]
+                # Duh, gotta account for zoom here too. Silly me
+                x = (event.pos[0] - self.pan_offset[0]) / self.zoom
+                y = (event.pos[1] - self.pan_offset[1]) / self.zoom
+
                 if event.button == 1 and not self.mouse_dragging:
                     for component in self.schematic.components:
                         rect = self.get_rect(component)
@@ -265,8 +293,21 @@ class Render:
                                 if "sub_schematic" in component:
                                     self.add_one_schematic(component["sub_schematic"])
 
+            if event.type == pygame.MOUSEWHEEL:
+                old_zoom = self.zoom
 
+                if event.y > 0:
+                    self.zoom *= 1.1
+                else:
+                    self.zoom *= 0.9
 
+                self.zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, self.zoom))
+                self.zoom = round(self.zoom, 2)
+
+                # Zoom toward mouse otherise it looks fucking shit
+                mx, my = pygame.mouse.get_pos()
+                self.pan_offset[0] = int(mx - (mx - self.pan_offset[0]) * (self.zoom / old_zoom))
+                self.pan_offset[1] = int(my - (my - self.pan_offset[1]) * (self.zoom / old_zoom))
 
         self.screen.fill(self.BACKGROUND_COLOUR)
 
@@ -275,15 +316,15 @@ class Render:
             surface = self.static_components[i]
 
             x, y = rect[0:2]
-            self.screen.blit(surface, (x + self.pan_offset[0], y + self.pan_offset[1]))
+            self.blit_scaled(surface, (x, y))
 
         for junction in self.schematic.junctions:
             x, y = junction["data"]
             pygame.draw.circle(
                 self.screen,
                 self.COMPONENT_COLOUR,
-                (x + self.pan_offset[0], y + self.pan_offset[1]),
-                3
+                self.world_to_screen(x, y),
+                max(1, int(3 * self.zoom))
             )
 
         for wire in self.schematic.connections:
@@ -293,9 +334,11 @@ class Render:
             pygame.draw.line(
                 self.screen,
                 self.COMPONENT_COLOUR,
-                (x1 + self.pan_offset[0], y1 + self.pan_offset[1]),
-                (x2 + self.pan_offset[0], y2 + self.pan_offset[1]),
+                self.world_to_screen(x1, y1),
+                self.world_to_screen(x2, y2),
+                max(1, int(self.zoom))
             )
 
 
         pygame.display.flip()
+        self.clock.tick(120)

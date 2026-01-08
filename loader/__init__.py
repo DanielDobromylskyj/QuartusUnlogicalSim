@@ -1,7 +1,9 @@
 from io import StringIO
 import os
 
-DEFAULT_FONT_SIZE = 8
+from .simulator import Simulator
+from .draw import Render as Renderer
+
 
 def read_next_internal(file):
     if type(file) == str:
