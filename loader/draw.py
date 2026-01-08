@@ -57,6 +57,7 @@ class Render:
         self.__pregenerate()
 
         self.pan_offset = [0, 0]
+        self.mouse_dragging = False
 
     @property
     def schematic(self):
@@ -247,10 +248,15 @@ class Render:
                 if event.buttons[0]:
                     self.pan_offset[0] += event.rel[0]
                     self.pan_offset[1] += event.rel[1]
+                    self.mouse_dragging = True
 
             if event.type == pygame.MOUSEBUTTONUP:
+                if self.mouse_dragging:
+                    self.mouse_dragging = False
+                    continue
+
                 x, y = event.pos[0] - self.pan_offset[0], event.pos[1] - self.pan_offset[1]
-                if event.button == 1:
+                if event.button == 1 and not self.mouse_dragging:
                     for component in self.schematic.components:
                         rect = self.get_rect(component)
 
