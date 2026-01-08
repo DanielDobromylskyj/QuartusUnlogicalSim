@@ -1,3 +1,5 @@
+import os.path
+
 import pygame
 import math
 
@@ -63,6 +65,9 @@ class Render:
         self.MAX_ZOOM = 5.0
 
         self.mouse_dragging = False
+        self.target_fps = 120
+
+        self.font = pygame.sysfont.SysFont("Consolas", 16)
 
     def blit_scaled(self, surface, xy):
         # We no longer scale it here, but I cba to remove this function
@@ -350,5 +355,19 @@ class Render:
             )
 
 
+        # Render overlay
+        fps = str(round(self.clock.get_fps()))
+
+        debug_text = (
+            f"Path: {os.path.basename(self.schematic.path)}",
+            f"FPS: {fps}{' ' * (len(str(self.target_fps)) - len(fps))} Target: {self.target_fps}",
+            "Simulation: Off"
+        )
+        y = 5
+        for line in debug_text:
+            surf = self.font.render(line, True, self.COMPONENT_COLOUR)
+            self.screen.blit(surf, (5, y))
+            y += surf.get_height() + 2
+
         pygame.display.flip()
-        self.clock.tick(120)
+        self.clock.tick(self.target_fps)
