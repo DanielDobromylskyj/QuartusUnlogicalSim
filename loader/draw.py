@@ -66,16 +66,10 @@ class Render:
         self.mouse_dragging = False
 
     def blit_scaled(self, surface, xy):
-        scaled = pygame.transform.scale(
-            surface,
-            (int(surface.get_width() * self.zoom),
-             int(surface.get_height() * self.zoom))
-        )
+        # We no longer scale it here, but I cba to remove this function
+        sx, sy = self.world_to_screen(*xy)
 
-        x, y = xy
-        sx, sy = self.world_to_screen(x, y)
-
-        self.screen.blit(scaled, (sx, sy))
+        self.screen.blit(surface, (sx, sy))
 
     def screen_to_world(self, x, y):
         return (
@@ -116,6 +110,11 @@ class Render:
 
             self.display_loading_screen(i / len(components), comp)
 
+    def __fast_generate(self):
+        self.static_components = [
+            self.generate_component(component, zoom=self.zoom)
+            for component in self.schematic.components
+        ]
 
     def get_rect(self, component):
         if component["type"] == "pin":
@@ -126,8 +125,9 @@ class Render:
 
         raise NotImplementedError(f"Unknown component type, cant get rect: {component['type']}")
 
-    def generate_component(self, component):
+    def generate_component(self, component, zoom=1.0):
         flags = []
+        width = max(1, int(zoom))
 
         if component["type"] == "pin":
             rect = component["data"]["rect"]
@@ -148,7 +148,7 @@ class Render:
         else:
             raise NotImplementedError(f"Unknown component type: {component['type']}")
 
-        size = (rect[2] - rect[0], rect[3] - rect[1])
+        size = ((rect[2] - rect[0]) * zoom, (rect[3] - rect[1]) * zoom)
 
 
         surface = pygame.Surface(size)
@@ -164,7 +164,9 @@ class Render:
                 pygame.draw.line(
                     surface,
                     self.COMPONENT_COLOUR,
-                    *task["data"]
+                    (task["data"][0][0] * zoom, task["data"][0][1] * zoom),
+                    (task["data"][1][0] * zoom, task["data"][1][1] * zoom),
+                    width=width
                 )
 
             elif task["type"] == "arc":
@@ -172,12 +174,17 @@ class Render:
                 p2 = task["data"][0][1]["data"]
                 rect_data = task["data"][0][2]["data"]
 
+                p1 = (p1[0] * zoom, p1[1] * zoom)
+                p2 = (p2[0] * zoom, p2[1] * zoom)
+                rect_data = [x * zoom for x in rect_data]
+
                 draw_arc(
                     surface,
                     self.COMPONENT_COLOUR,
                     p1,
                     p2,
-                    rect_data
+                    rect_data,
+                    width=width
                 )
 
             elif task["type"] == "circle":
@@ -186,8 +193,8 @@ class Render:
                 pygame.draw.ellipse(
                     surface,
                     self.COMPONENT_COLOUR,
-                    pygame.Rect(x1, y1, x2 - x1, y2 - y1),
-                    width=1
+                    pygame.Rect(x1 * zoom, y1 * zoom, (x2 - x1) * zoom, (y2 - y1) * zoom),
+                    width=width
                 )
 
             elif task["type"] == "rectangle":
@@ -196,8 +203,8 @@ class Render:
                 pygame.draw.rect(
                     surface,
                     self.COMPONENT_COLOUR,
-                    pygame.Rect(x1, y1, x2 - x1, y2 - y1),
-                    width=1
+                    pygame.Rect(x1 * zoom, y1 * zoom, (x2 - x1) * zoom, (y2 - y1) * zoom),
+                    width=width
                 )
 
             else:
@@ -213,18 +220,20 @@ class Render:
                         pygame.draw.line(
                             surface,
                             self.COMPONENT_COLOUR,
-                            *data["line"]
+                            (data["line"][0][0] * zoom, data["line"][0][1] * zoom),
+                            (data["line"][1][0] * zoom, data["line"][1][1] * zoom),
+                            width=width
                         )
 
                     if chunk[0]["type"] == "text":
                         data = chunk[0]["data"]
                         x, y, tw, th = data["rect"]
 
-                        font = pygame.sysfont.SysFont(data["font"]["name"], data["font"].get("size", DEFAULT_FONT_SIZE))
+                        font = pygame.sysfont.SysFont(data["font"]["name"], int(data["font"].get("size", DEFAULT_FONT_SIZE) * self.zoom))
                         text_surf = font.render(data["text"], True, self.COMPONENT_COLOUR)
 
 
-                        surface.blit(text_surf, (x, y))
+                        surface.blit(text_surf, (x * zoom, y * zoom))
 
         return surface
 
@@ -308,6 +317,8 @@ class Render:
                 mx, my = pygame.mouse.get_pos()
                 self.pan_offset[0] = int(mx - (mx - self.pan_offset[0]) * (self.zoom / old_zoom))
                 self.pan_offset[1] = int(my - (my - self.pan_offset[1]) * (self.zoom / old_zoom))
+
+                self.__fast_generate()
 
         self.screen.fill(self.BACKGROUND_COLOUR)
 
