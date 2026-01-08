@@ -27,12 +27,11 @@ def draw_arc(surface, color, p1, p2, rect_data, width=2, steps=48):
     a1 = ellipse_angle(*p1)
     a2 = ellipse_angle(*p2)
 
-    # --- shortest arc selection ---
     delta = a2 - a1
-    if delta > math.pi:
+
+    # force clockwise
+    if delta > 0:
         delta -= math.tau
-    elif delta < -math.pi:
-        delta += math.tau
 
     # --- sample arc ---
     points = []
