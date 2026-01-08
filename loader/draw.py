@@ -1,0 +1,295 @@
+import pygame
+import math
+
+from loader import DEFAULT_FONT_SIZE
+
+pygame.init()
+
+def point_to_angle(px, py, cx, cy):
+    return math.atan2(py - cy, px - cx)
+
+
+def draw_arc(surface, color, p1, p2, rect_data, width=2, steps=48):
+    x1, y1, x2, y2 = rect_data
+
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    rx = abs(x2 - x1) / 2
+    ry = abs(y2 - y1) / 2
+
+    # --- correct geometric ellipse angle ---
+    def ellipse_angle(px, py):
+        return math.atan2(
+            (py - cy) * rx,
+            (px - cx) * ry
+        )
+
+    a1 = ellipse_angle(*p1)
+    a2 = ellipse_angle(*p2)
+
+    # --- shortest arc selection ---
+    delta = a2 - a1
+    if delta > math.pi:
+        delta -= math.tau
+    elif delta < -math.pi:
+        delta += math.tau
+
+    # --- sample arc ---
+    points = []
+    for i in range(steps + 1):
+        t = i / steps
+        a = a1 + delta * t
+        x = cx + math.cos(a) * rx
+        y = cy + math.sin(a) * ry
+        points.append((x, y))
+
+    pygame.draw.lines(surface, color, False, points, width)
+
+class Render:
+    BACKGROUND_COLOUR = (10, 10, 10)
+    COMPONENT_COLOUR = (230, 230, 230)
+
+    def __init__(self, schematic):
+        self.screen = pygame.display.set_mode((1920, 1080))
+        self.schematics = [schematic]
+
+        self.static_components = []
+        self.__pregenerate()
+
+        self.pan_offset = [0, 0]
+
+    @property
+    def schematic(self):
+        return self.schematics[-1]
+
+    def back_one_schematic(self):
+        if len(self.schematics) > 1:
+            self.schematics.pop(-1)
+            self.__pregenerate()
+
+    def add_one_schematic(self, schematic):
+        print(schematic.path)
+        self.schematics.append(schematic)
+        self.__pregenerate()
+
+    def __pregenerate(self):
+        self.pan_offset = [0, 0]
+        self.static_components = []
+
+        self.display_loading_screen(0, None)
+        components = self.schematic.components
+
+        for i, component in enumerate(components):
+            comp = self.generate_component(component)
+            self.static_components.append(comp)
+
+            self.display_loading_screen(i / len(components), comp)
+
+
+    def get_rect(self, component):
+        if component["type"] == "pin":
+            return component["data"]["rect"]
+
+        if component["type"] == "symbol":
+            return component["data"][0][0]["data"]
+
+        raise NotImplementedError(f"Unknown component type, cant get rect: {component['type']}")
+
+    def generate_component(self, component):
+        flags = []
+
+        if component["type"] == "pin":
+            rect = component["data"]["rect"]
+            drawing_data = component["data"]["drawing"]
+
+        elif component["type"] == "symbol":
+            rect = component["data"][0][0]["data"]
+            drawing_data = None
+
+            for chunk in component["data"]:
+                if type(chunk[0]) is str:
+                    flags.append(chunk)
+
+                elif chunk[0]["type"] == "drawing":
+                    drawing_data = chunk[0]["data"]
+                    continue
+
+        else:
+            raise NotImplementedError(f"Unknown component type: {component['type']}")
+
+        size = (rect[2] - rect[0], rect[3] - rect[1])
+
+
+        surface = pygame.Surface(size)
+        surface.fill(self.BACKGROUND_COLOUR)
+
+        for raw in drawing_data:
+            if not raw:
+                continue
+
+            task = raw[0]
+
+            if task["type"] == "line":
+                pygame.draw.line(
+                    surface,
+                    self.COMPONENT_COLOUR,
+                    *task["data"]
+                )
+
+            elif task["type"] == "arc":
+                p1 = task["data"][0][0]["data"]
+                p2 = task["data"][0][1]["data"]
+                rect_data = task["data"][0][2]["data"]
+
+                draw_arc(
+                    surface,
+                    self.COMPONENT_COLOUR,
+                    p1,
+                    p2,
+                    rect_data
+                )
+
+            elif task["type"] == "circle":
+                x1, y1, x2, y2 = task["data"][0][0]["data"]
+
+                pygame.draw.ellipse(
+                    surface,
+                    self.COMPONENT_COLOUR,
+                    pygame.Rect(x1, y1, x2 - x1, y2 - y1),
+                    width=1
+                )
+
+            elif task["type"] == "rectangle":
+                x1, y1, x2, y2 = task["data"][0][0]["data"]
+
+                pygame.draw.rect(
+                    surface,
+                    self.COMPONENT_COLOUR,
+                    pygame.Rect(x1, y1, x2 - x1, y2 - y1),
+                    width=1
+                )
+
+            else:
+                print("[WARNING] Unknown render task:", task["type"])
+
+        # See if we have some extra rendering to do
+        if component["type"] == "symbol":
+            for chunk in component["data"]:
+                if type(chunk[0]) is dict:
+                    if chunk[0]["type"] == "port":
+                        data = chunk[0]["data"]  # This has a bunch of text that I cba to add rn
+
+                        pygame.draw.line(
+                            surface,
+                            self.COMPONENT_COLOUR,
+                            *data["line"]
+                        )
+
+                    if chunk[0]["type"] == "text":
+                        data = chunk[0]["data"]
+                        x, y, tw, th = data["rect"]
+
+                        font = pygame.sysfont.SysFont(data["font"]["name"], data["font"].get("size", DEFAULT_FONT_SIZE))
+                        text_surf = font.render(data["text"], True, self.COMPONENT_COLOUR)
+
+
+                        surface.blit(text_surf, (x, y))
+
+
+
+
+
+        return surface
+
+
+
+
+    def display_loading_screen(self, percent_completed: float, preview):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+
+        self.screen.fill((0, 0, 0))
+
+        pygame.draw.rect(
+            self.screen,
+            (130, 130, 130),
+            pygame.Rect(
+                20, (self.screen.get_height() // 2) - 20, self.screen.get_width() - 40, 40
+            )
+        )
+
+        pygame.draw.rect(
+            self.screen,
+            (10, 250, 10),
+            pygame.Rect(
+                21, (self.screen.get_height() // 2) - 19, (self.screen.get_width() - 38) * percent_completed, 38
+            )
+        )
+
+        if preview:
+            self.screen.blit(preview, ((self.screen.get_width() - preview.get_width()) // 2, (self.screen.get_height() // 2) + 25))
+
+        pygame.display.flip()
+
+    def update(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+
+            if event.type == pygame.KEYUP:
+                if event.key == pygame.K_ESCAPE:
+                    self.back_one_schematic()
+
+            if event.type == pygame.MOUSEMOTION:
+                if event.buttons[0]:
+                    self.pan_offset[0] += event.rel[0]
+                    self.pan_offset[1] += event.rel[1]
+
+            if event.type == pygame.MOUSEBUTTONUP:
+                x, y = event.pos[0] - self.pan_offset[0], event.pos[1] - self.pan_offset[1]
+                if event.button == 1:
+                    for component in self.schematic.components:
+                        rect = self.get_rect(component)
+
+                        if (rect[0] < x < rect[2]) and (rect[1] < y < rect[3]):
+                            if component["type"] == "symbol":
+                                if "sub_schematic" in component:
+                                    self.add_one_schematic(component["sub_schematic"])
+
+
+
+
+        self.screen.fill(self.BACKGROUND_COLOUR)
+
+        for i, component in enumerate(self.schematic.components):
+            rect = self.get_rect(component)
+            surface = self.static_components[i]
+
+            x, y = rect[0:2]
+            self.screen.blit(surface, (x + self.pan_offset[0], y + self.pan_offset[1]))
+
+        for junction in self.schematic.junctions:
+            x, y = junction["data"]
+            pygame.draw.circle(
+                self.screen,
+                self.COMPONENT_COLOUR,
+                (x + self.pan_offset[0], y + self.pan_offset[1]),
+                3
+            )
+
+        for wire in self.schematic.connections:
+            x1, y1 = wire[0]["data"]
+            x2, y2 = wire[1]["data"]
+
+            pygame.draw.line(
+                self.screen,
+                self.COMPONENT_COLOUR,
+                (x1 + self.pan_offset[0], y1 + self.pan_offset[1]),
+                (x2 + self.pan_offset[0], y2 + self.pan_offset[1]),
+            )
+
+
+        pygame.display.flip()
