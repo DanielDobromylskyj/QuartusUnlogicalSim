@@ -1,4 +1,5 @@
 import os.path
+import random
 
 import pygame
 import math
@@ -49,12 +50,18 @@ def draw_arc(surface, color, p1, p2, rect_data, width=2, steps=48):
 class Render:
     BACKGROUND_COLOUR = (10, 10, 10)
     COMPONENT_COLOUR = (230, 230, 230)
+    ACTIVE_COLOUR = (240, 30, 30)
+    UNACTIVE_COLOUR = (100, 30, 30)
+    NO_CONNECTION_COLOUR = (30, 30, 150)
+    DEBUG_GREEN = (30, 250, 30)
+    DEBUG_DARK_GREEN = (30, 100, 30)
 
-    def __init__(self, schematic):
+    def __init__(self, schematic, simulator):
         self.screen = pygame.display.set_mode((1920, 1080))
         self.clock = pygame.time.Clock()
 
         self.schematics = [schematic]
+        self.simulator = simulator
 
         self.static_components = []
         self.__pregenerate()
@@ -229,6 +236,16 @@ class Render:
                             width=width
                         )
 
+                        for text in data["text"]:
+                            x, y, tw, th = text["rect"]
+
+                            font = pygame.sysfont.SysFont(text["font"]["name"],
+                                                          int(text["font"].get("size", DEFAULT_FONT_SIZE) * self.zoom))
+                            text_surf = font.render(text["text"], True, self.COMPONENT_COLOUR)
+
+                            surface.blit(text_surf, (x * zoom, y * zoom))
+
+
                     if chunk[0]["type"] == "text":
                         data = chunk[0]["data"]
                         x, y, tw, th = data["rect"]
@@ -238,6 +255,16 @@ class Render:
 
 
                         surface.blit(text_surf, (x * zoom, y * zoom))
+
+        if component["type"] == "pin":
+            for data in component["data"]["text"]:
+                font = pygame.sysfont.SysFont(data["font"]["name"],
+                                              int(data["font"].get("size", DEFAULT_FONT_SIZE) * self.zoom))
+                text_surf = font.render(data["text"], True, self.COMPONENT_COLOUR)
+
+                x, y, tw, th = data["rect"]
+                surface.blit(text_surf, (x * zoom, y * zoom))
+
 
         return surface
 
@@ -306,6 +333,29 @@ class Render:
                                 if "sub_schematic" in component:
                                     self.add_one_schematic(component["sub_schematic"])
 
+
+                if event.button == 1:
+                    for component in self.schematic.components:
+                        rect = self.get_rect(component)
+
+                        if (rect[0] < x < rect[2]) and (rect[1] < y < rect[3]):
+                            if component["type"] == "pin":
+                                pin_name = component["data"]["text"][1]["text"]
+                                component["_simulation"]["pin_vcc"]["outputs"][pin_name] = 0.0
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                x = (event.pos[0] - self.pan_offset[0]) / self.zoom
+                y = (event.pos[1] - self.pan_offset[1]) / self.zoom
+
+                if event.button == 1:
+                    for component in self.schematic.components:
+                        rect = self.get_rect(component)
+
+                        if (rect[0] < x < rect[2]) and (rect[1] < y < rect[3]):
+                            if component["type"] == "pin":
+                                pin_name = component["data"]["text"][1]["text"]
+                                component["_simulation"]["pin_vcc"]["outputs"][pin_name] = 1.0
+
             if event.type == pygame.MOUSEWHEEL:
                 old_zoom = self.zoom
 
@@ -346,13 +396,83 @@ class Render:
             x1, y1 = wire[0]["data"]
             x2, y2 = wire[1]["data"]
 
+            vcc = self.simulator.get_wire_vcc((x1, y1))
+
+            colour = self.UNACTIVE_COLOUR
+            if vcc is None:
+                colour = self.NO_CONNECTION_COLOUR
+
+            elif vcc > 0.5:
+                colour = self.ACTIVE_COLOUR
+
             pygame.draw.line(
                 self.screen,
-                self.COMPONENT_COLOUR,
+                colour,
                 self.world_to_screen(x1, y1),
                 self.world_to_screen(x2, y2),
                 max(1, int(self.zoom))
             )
+
+        debug_enabled =  pygame.key.get_pressed()[pygame.K_d]
+
+        if debug_enabled:
+            for component in self.schematic.components:
+                for input_pin, connections in component["_simulation"]["connections"]["inputs"].items():
+                    p1 = self.get_rect(component)[0:2]
+
+                    if component["type"] == "pin":
+                        p1 = [
+                            p1[0] + component["data"]["pt"][0],
+                            p1[1] + component["data"]["pt"][1]
+                        ]
+
+                    if component["type"] == "symbol":
+                        for [chunk] in component["data"]:
+                            if type(chunk) is dict and chunk["type"] == "port":
+                                if chunk["data"]["text"][0]["text"] == input_pin:
+                                    p1 = [
+                                        p1[0] + chunk["data"]["pt"][0],
+                                        p1[1] + chunk["data"]["pt"][1]
+                                    ]
+
+                    for (comp_id, pin_info) in connections:
+                        component2 = self.schematic.components[comp_id]
+
+                        p2 = self.get_rect(component2)[0:2]
+
+                        if component2["type"] == "pin":
+                            p2 = [
+                                p2[0] + component2["data"]["pt"][0],
+                                p2[1] + component2["data"]["pt"][1]
+                            ]
+
+                        if component2["type"] == "symbol":
+                            for [chunk] in component2["data"]:
+                                if type(chunk) is dict and chunk["type"] == "port":
+                                    if chunk["data"]["text"][0]["text"] == pin_info["pin_name"]:
+                                        p2 = [
+                                            p2[0] + chunk["data"]["pt"][0],
+                                            p2[1] + chunk["data"]["pt"][1]
+                                        ]
+
+                        p3 = [
+                            p1[0] + (p2[0] - p1[0]) / 2,
+                            p1[1] + (p2[1] - p1[1]) / 2
+                        ]
+
+                        pygame.draw.line(
+                            self.screen,
+                            self.DEBUG_DARK_GREEN,
+                            self.world_to_screen(*p1),
+                            self.world_to_screen(*p3)
+                        )
+
+                        pygame.draw.line(
+                            self.screen,
+                            self.DEBUG_GREEN,
+                            self.world_to_screen(*p3),
+                            self.world_to_screen(*p2)
+                        )
 
 
         # Render overlay
@@ -361,7 +481,8 @@ class Render:
         debug_text = (
             f"Path: {os.path.basename(self.schematic.path)}",
             f"FPS: {fps}{' ' * (len(str(self.target_fps)) - len(fps))} Target: {self.target_fps}",
-            "Simulation: Off"
+            f"Simulation: {self.simulator.status}",
+            f"Debug (hold 'd'): {debug_enabled}"
         )
         y = 5
         for line in debug_text:

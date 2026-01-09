@@ -207,7 +207,7 @@ class Simulator:
                     "pin_name": pin_name,
                 })
 
-        # Update component internals
+        # Update component internals  - This Fucking TANKS
         if "sim" in component["_simulation"]:
             sim = component["_simulation"]["sim"]
 
