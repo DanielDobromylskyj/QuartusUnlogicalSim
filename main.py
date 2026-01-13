@@ -12,11 +12,6 @@ schem = Schematic("test_data/quartus/main.bdf")
 
 - File Selection
 
-- Robustness
-  - Clock Speed Selection -> Dont allow 0 -> Errors
-  
-- Performance
-  - Faster Zooming -> Currently redraws for every zoom change, make it do a temp zoom until user stops changing zoom
 
 """
 
