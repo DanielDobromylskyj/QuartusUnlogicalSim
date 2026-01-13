@@ -1,4 +1,5 @@
 import os.path
+import random
 import time
 
 import pygame
@@ -12,6 +13,22 @@ from .simulator2 import Simulator
 DEFAULT_FONT_SIZE = 8
 
 pygame.init()
+
+
+HELP_TEXT = """
+> Help Menu
+    Open: p
+    Close: escape
+
+> Simulation
+    Reload Files: ctrl + r
+    Force update: r
+
+> Input Pins
+    Open Setting: Right Click
+    
+"""
+
 
 def point_to_angle(px, py, cx, cy):
     return math.atan2(py - cy, px - cx)
@@ -60,6 +77,8 @@ class Render:
     NO_CONNECTION_COLOUR = (30, 30, 150)
     DEBUG_GREEN = (30, 250, 30)
     DEBUG_DARK_GREEN = (30, 100, 30)
+    HELP_BACKGROUND = (40, 40, 40)
+    HELP_TEXT_COLOUR = (255, 255, 255)
 
     def __init__(self, schematic, simulator):
         self.screen = pygame.display.set_mode((1920, 1080))
@@ -68,6 +87,7 @@ class Render:
         self.schematics = [schematic]
         self.simulators = [simulator]
 
+        self.font_cache = {}
         self.static_components = []
         self.__pregenerate()
 
@@ -80,7 +100,7 @@ class Render:
         self.MIN_ZOOM = 0.2
         self.MAX_ZOOM = 5.0
 
-        self.zoom_wait_time = 1  # s
+        self.zoom_wait_time = 0.5  # s
         self.last_zoom_time = 0
         self.last_static_zoom = self.zoom
 
@@ -89,8 +109,23 @@ class Render:
 
         self.font = pygame.sysfont.SysFont("Consolas", 16)
 
+        self.help_overlay_active = False
+        self.help_surface = self.create_help_menu()
+
+    def create_help_menu(self):
+        surface = pygame.Surface((self.screen.get_width() - 40, self.screen.get_height() - 40))
+        surface.fill(self.HELP_BACKGROUND)
+
+        y = 5
+        for line in HELP_TEXT.splitlines():
+            surf = self.font.render(line, True, self.HELP_TEXT_COLOUR)
+            surface.blit(surf, (5, y))
+            y += surf.get_height() + 2
+
+        return surface
+
+
     def blit_scaled(self, surface, xy):
-        # We no longer scale it here, but I cba to remove this function
         sx, sy = self.world_to_screen(*xy)
 
         if self.zoom == self.last_static_zoom:
@@ -249,12 +284,23 @@ class Render:
             else:
                 print("[WARNING] Unknown render task:", task["type"])
 
+
+        def draw_text(text_string, tx, ty, colour, font_name, font_size):
+            if (str(font_name), font_size) not in self.font_cache:
+                self.font_cache[(str(font_name), font_size)] = pygame.sysfont.SysFont(font_name, font_size)
+
+            loaded_font = self.font_cache[(str(font_name), font_size)]
+            text_surf = loaded_font.render(text_string, True, colour)
+
+            surface.blit(text_surf, (tx, ty))
+
+
         # See if we have some extra rendering to do
         if component["type"] == "symbol":
             for chunk in component["data"]:
                 if type(chunk[0]) is dict:
                     if chunk[0]["type"] == "port":
-                        data = chunk[0]["data"]  # This has a bunch of text that I cba to add rn
+                        data = chunk[0]["data"]  # This has a bunch of text that I cba to add rn - I added it silly
 
                         pygame.draw.line(
                             surface,
@@ -264,16 +310,28 @@ class Render:
                             width=width
                         )
 
+                        last_text = ""
                         for text in data["text"]:
                             x, y, tw, th = text["rect"]
 
+                            if "invisible" in text:
+                                continue
+
+                            if x == 0 and y == 0:
+                                continue
+
+                            if last_text == text["text"]:
+                                continue
+
                             try:
-                                font = pygame.sysfont.SysFont(text["font"]["name"],
-                                                              int(text["font"].get("size", DEFAULT_FONT_SIZE) * self.zoom))
-                                text_surf = font.render(text["text"], True, self.COMPONENT_COLOUR)
-
-                                surface.blit(text_surf, (x * zoom, y * zoom))
-
+                                last_text = text["text"]
+                                draw_text(
+                                    text["text"],
+                                    x * zoom, (y + random.random() * 5) * zoom,
+                                    self.COMPONENT_COLOUR,
+                                    text["font"]["name"],
+                                    int(text["font"].get("size", DEFAULT_FONT_SIZE) * zoom)
+                                )
                             except TypeError:
                                 print("[WARNING] Attempted to render non unicode text")
 
@@ -282,20 +340,31 @@ class Render:
                         data = chunk[0]["data"]
                         x, y, tw, th = data["rect"]
 
-                        font = pygame.sysfont.SysFont(data["font"]["name"], int(data["font"].get("size", DEFAULT_FONT_SIZE) * self.zoom))
-                        text_surf = font.render(data["text"], True, self.COMPONENT_COLOUR)
+                        if "invisible" in data:
+                            continue
 
-
-                        surface.blit(text_surf, (x * zoom, y * zoom))
+                        draw_text(
+                            data["text"],
+                            x * zoom, y * zoom,
+                            self.COMPONENT_COLOUR,
+                            data["font"]["name"],
+                            int(data["font"].get("size", DEFAULT_FONT_SIZE) * zoom)
+                        )
 
         if component["type"] == "pin":
             for data in component["data"]["text"]:
-                font = pygame.sysfont.SysFont(data["font"]["name"],
-                                              int(data["font"].get("size", DEFAULT_FONT_SIZE) * self.zoom))
-                text_surf = font.render(data["text"], True, self.COMPONENT_COLOUR)
-
                 x, y, tw, th = data["rect"]
-                surface.blit(text_surf, (x * zoom, y * zoom))
+
+                if "invisible" in data:
+                    continue
+
+                draw_text(
+                    data["text"],
+                    x * zoom, y * zoom,
+                    self.COMPONENT_COLOUR,
+                    data["font"]["name"],
+                    int(data["font"].get("size", DEFAULT_FONT_SIZE) * zoom)
+                )
 
 
         return surface
@@ -453,11 +522,21 @@ class Render:
                 exit()
 
             if event.type == pygame.KEYUP:
+                if event.key == pygame.K_p:
+                    self.help_overlay_active = True
+
                 if event.key == pygame.K_ESCAPE:
-                    self.back_one_schematic()
+                    if self.help_overlay_active:
+                        self.help_overlay_active = False
+
+                    else:
+                        self.back_one_schematic()
 
                 if event.key == pygame.K_r:
-                    self.simulator.full_rescan()
+                    if event.mod & pygame.KMOD_CTRL:
+                        self.simulator.reload()
+                    else:
+                        self.simulator.full_rescan()
 
             if event.type == pygame.MOUSEMOTION:
                 if event.buttons[0]:
@@ -597,13 +676,17 @@ class Render:
         debug_text = (
             f"Path: {os.path.basename(self.schematic.path)}",
             f"FPS: {fps}{' ' * (len(str(self.target_fps)) - len(fps))} Target: {self.target_fps}",
-            f"Simulation: {self.simulator.status}"
+            f"Simulation: {self.simulator.status}",
+            "For Help Press: p"
         )
         y = 5
         for line in debug_text:
             surf = self.font.render(line, True, self.COMPONENT_COLOUR)
             self.screen.blit(surf, (5, y))
             y += surf.get_height() + 2
+
+        if self.help_overlay_active:
+            self.screen.blit(self.help_surface, (20, 20))
 
         pygame.display.flip()
         self.clock.tick(self.target_fps)

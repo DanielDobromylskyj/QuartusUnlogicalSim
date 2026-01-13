@@ -220,7 +220,6 @@ class Simulator:
 
         self.clocks = []
 
-        self.global_clock_tick = GLOBAL_CLOCK_SPEED
         self.is_root = is_root
 
         if auto_gen: # Should run 2 update cycles and everything will be initialised
@@ -233,7 +232,6 @@ class Simulator:
                 raise IntegrityError("Simulator failed to build, Unknown reason.")
 
         self.full_rescan()
-
 
     def build(self):
         """ This is run once at run time to avoid expensive trace calculations every frame """
@@ -404,7 +402,12 @@ class Simulator:
     def update_clocks(self):
         current_time = time.time()
         for component, pin_comp in self.clocks:  # Component should be an input pin ONLY
-            ms = 1 / pin_comp.settings["clock_speed_hz"]
+            speed = pin_comp.settings["clock_speed_hz"]
+
+            if speed == 0:
+                continue
+
+            ms = 1 / speed
 
             if current_time - ms > pin_comp.last_clk:
                 pin_comp.last_clk = current_time
@@ -468,3 +471,30 @@ class Simulator:
             return self.update_simulation()
 
         return None
+
+    def reload(self):
+        start = time.time()
+        self.connection_map = {}
+        self.wire_vcc_lookup = {}
+        self.clocks = []
+        self.dirty_components = []
+        self.last_hash = -1
+        self.components = []
+        self.wires = []
+        self.pin_inputs = []
+        self.pin_outputs = []
+        self.inputs = {}
+        self.outputs = {}
+        self.simulation_tick = 0
+        self.built = False
+        self.status = "Off"
+
+        self.schematic.reload()
+
+        self.build()
+
+        self.update_simulation()
+        self.full_rescan()
+
+        end = time.time()
+        self.status = f"On (Restarted in {round((end - start) * 1000)}ms)"

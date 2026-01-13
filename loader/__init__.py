@@ -93,6 +93,18 @@ class Schematic:
         self.__load_layout()
 
 
+    def reload(self):
+        self.components = []
+        self.connections = []
+        self.junctions = []
+
+        self.sub_schematics = []
+
+        with open(self.path, "r") as f:
+            self.layout = self.__parse(f)
+
+        self.__load_layout()
+
     def __extract_symbol_file_info(self, component):
         comp_name = None
         comp_instance = None
