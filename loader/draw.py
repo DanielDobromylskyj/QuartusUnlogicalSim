@@ -4,6 +4,8 @@ import random
 import pygame
 import math
 
+from .simulator2 import Simulator
+
 DEFAULT_FONT_SIZE = 8
 
 pygame.init()
@@ -309,6 +311,9 @@ class Render:
                 if event.key == pygame.K_ESCAPE:
                     self.back_one_schematic()
 
+                if event.key == pygame.K_r:
+                    self.simulator.full_rescan()
+
             if event.type == pygame.MOUSEMOTION:
                 if event.buttons[0]:
                     self.pan_offset[0] += event.rel[0]
@@ -325,36 +330,32 @@ class Render:
                 y = (event.pos[1] - self.pan_offset[1]) / self.zoom
 
                 if event.button == 1 and not self.mouse_dragging:
-                    for component in self.schematic.components:
-                        rect = self.get_rect(component)
+                    for component in self.simulator.components:
+                        rect = component.rect
 
                         if (rect[0] < x < rect[2]) and (rect[1] < y < rect[3]):
-                            if component["type"] == "symbol":
-                                if "sub_schematic" in component:
-                                    self.add_one_schematic(component["sub_schematic"])
+                            if component.component_name != "pin.generic":
+                                if isinstance(component.internal_component, Simulator):
+                                    self.add_one_schematic(component.internal_component.schematic)
 
 
                 if event.button == 1:
-                    for component in self.schematic.components:
-                        rect = self.get_rect(component)
+                    for component in self.simulator.components:
+                        rect = component.rect
 
                         if (rect[0] < x < rect[2]) and (rect[1] < y < rect[3]):
-                            if component["type"] == "pin":
-                                pin_name = component["data"]["text"][1]["text"]
-                                component["_simulation"]["pin_vcc"]["outputs"][pin_name] = 0.0
+                            self.simulator.update_input_pin(component, 0)
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 x = (event.pos[0] - self.pan_offset[0]) / self.zoom
                 y = (event.pos[1] - self.pan_offset[1]) / self.zoom
 
                 if event.button == 1:
-                    for component in self.schematic.components:
-                        rect = self.get_rect(component)
+                    for component in self.simulator.components:
+                        rect = component.rect
 
                         if (rect[0] < x < rect[2]) and (rect[1] < y < rect[3]):
-                            if component["type"] == "pin":
-                                pin_name = component["data"]["text"][1]["text"]
-                                component["_simulation"]["pin_vcc"]["outputs"][pin_name] = 1.0
+                            self.simulator.update_input_pin(component, 1)
 
             if event.type == pygame.MOUSEWHEEL:
                 old_zoom = self.zoom
@@ -396,6 +397,8 @@ class Render:
             x1, y1 = wire[0]["data"]
             x2, y2 = wire[1]["data"]
 
+
+
             vcc = self.simulator.get_wire_vcc((x1, y1))
 
             colour = self.UNACTIVE_COLOUR
@@ -413,67 +416,6 @@ class Render:
                 max(1, int(self.zoom))
             )
 
-        debug_enabled =  pygame.key.get_pressed()[pygame.K_d]
-
-        if debug_enabled:
-            for component in self.schematic.components:
-                for input_pin, connections in component["_simulation"]["connections"]["inputs"].items():
-                    p1 = self.get_rect(component)[0:2]
-
-                    if component["type"] == "pin":
-                        p1 = [
-                            p1[0] + component["data"]["pt"][0],
-                            p1[1] + component["data"]["pt"][1]
-                        ]
-
-                    if component["type"] == "symbol":
-                        for [chunk] in component["data"]:
-                            if type(chunk) is dict and chunk["type"] == "port":
-                                if chunk["data"]["text"][0]["text"] == input_pin:
-                                    p1 = [
-                                        p1[0] + chunk["data"]["pt"][0],
-                                        p1[1] + chunk["data"]["pt"][1]
-                                    ]
-
-                    for (comp_id, pin_info) in connections:
-                        component2 = self.schematic.components[comp_id]
-
-                        p2 = self.get_rect(component2)[0:2]
-
-                        if component2["type"] == "pin":
-                            p2 = [
-                                p2[0] + component2["data"]["pt"][0],
-                                p2[1] + component2["data"]["pt"][1]
-                            ]
-
-                        if component2["type"] == "symbol":
-                            for [chunk] in component2["data"]:
-                                if type(chunk) is dict and chunk["type"] == "port":
-                                    if chunk["data"]["text"][0]["text"] == pin_info["pin_name"]:
-                                        p2 = [
-                                            p2[0] + chunk["data"]["pt"][0],
-                                            p2[1] + chunk["data"]["pt"][1]
-                                        ]
-
-                        p3 = [
-                            p1[0] + (p2[0] - p1[0]) / 2,
-                            p1[1] + (p2[1] - p1[1]) / 2
-                        ]
-
-                        pygame.draw.line(
-                            self.screen,
-                            self.DEBUG_DARK_GREEN,
-                            self.world_to_screen(*p1),
-                            self.world_to_screen(*p3)
-                        )
-
-                        pygame.draw.line(
-                            self.screen,
-                            self.DEBUG_GREEN,
-                            self.world_to_screen(*p3),
-                            self.world_to_screen(*p2)
-                        )
-
 
         # Render overlay
         fps = str(round(self.clock.get_fps()))
@@ -481,8 +423,7 @@ class Render:
         debug_text = (
             f"Path: {os.path.basename(self.schematic.path)}",
             f"FPS: {fps}{' ' * (len(str(self.target_fps)) - len(fps))} Target: {self.target_fps}",
-            f"Simulation: {self.simulator.status}",
-            f"Debug (hold 'd'): {debug_enabled}"
+            f"Simulation: {self.simulator.status}"
         )
         y = 5
         for line in debug_text:

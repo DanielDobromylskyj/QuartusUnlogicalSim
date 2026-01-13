@@ -1,14 +1,196 @@
 import time
-import sys
+from collections import deque
+
 from . import components
 
-sys.setrecursionlimit(5000)
 
+
+"""
+Simulator V2
+
+>>       Major  Todos         <<
+
+Make sub-schematics work / load again
+Make it simulate
+
+>>   Possible Optimisations   <<
+
+Replace dicts with lists / tuples where possible
+  - Pin Name -> Pin ID
+
+
+"""
 
 GLOBAL_CLOCK_SPEED = 60  # Flips every X ticks
 
 class IntegrityError(Exception):
     pass
+
+
+class SimulatorWire:
+    def __init__(self, output_comp, pin_out, input_comp, pin_in):
+        self.input_comp = input_comp
+        self.output_comp = output_comp
+
+        self.pin_in_name = pin_in
+        self.pin_out_name = pin_out
+
+
+
+class ComponentPin:
+    def __init__(self, xy):
+        self.connections = []
+
+        self.vcc = 0.0
+        self.xy = xy
+
+
+class SimulatorComponent:
+    def __init__(self, component):
+        self.component = component
+        self.component_name = None
+
+        self.is_input = None
+        self.internal_component = None
+        self.rect = None
+        self.has_sub_schematic = False
+
+        self.simulator_tick = 0
+        self.last_hash = -1
+
+        self.tick = 0
+
+        self.inputs = {}
+        self.outputs = {}
+
+        self.__load()
+
+    def __str__(self):
+        if self.component_name == "pin.generic":
+            pins = self.outputs if self.is_input else self.inputs
+            pin_name = list(pins.keys())[0]
+
+            return f"pin.{'input' if self.is_input else 'output'}.{pin_name}"
+
+        if isinstance(self.internal_component, Simulator):
+            return "symbol.schematic"
+
+        return f"symbol.{self.internal_component.__class__.__name__}"
+
+
+
+    def get_input_hash(self):
+        """
+            If this becomes a bottleneck look into hashing with cpython like:
+            hash(tuple(pin.vcc for pin in self.inputs.values()))
+
+            :return:
+        """
+        hv = 0
+        for pin in self.inputs.values():
+            hv = (hv << 1) ^ int(pin.vcc)
+        return hv
+
+    def __load(self):
+        if self.component["type"] == "pin":
+            self.component_name = "pin.generic"
+            name = self.component["data"]["text"][1]["text"]
+            self.is_input = "input" in self.component["data"]
+
+            rect = self.component["data"]["rect"]
+            self.rect = rect
+            local_xy = self.component["data"]["pt"]
+
+            xy = ( rect[0] + local_xy[0], rect[1] + local_xy[1] )
+
+            # If this component is an input, then it will output a value, so we set a pin for that.
+            if self.is_input:
+                self.outputs[str(name)] = ComponentPin(xy)
+            else:
+                self.inputs[str(name)] = ComponentPin(xy)
+
+        elif self.component["type"] == "symbol":
+            comp_name = self.component["data"][1][0]["data"]["text"]
+            self.component_name = comp_name
+
+            if "sub_schematic" in self.component:
+                self.internal_component = Simulator(self.component["sub_schematic"], auto_gen=True, is_root=False)
+                self.has_sub_schematic = True
+
+            elif hasattr(components, comp_name):
+                self.internal_component = getattr(components, comp_name)(self)
+
+            else:
+                print(f"[WARNING] Unknown Schematic / Component:", comp_name)
+
+            rect = None
+            for [chunk] in self.component["data"]:
+                if type(chunk) is dict and chunk["type"] == "rect":
+                    rect = chunk["data"]
+
+                if type(chunk) is dict and chunk["type"] == "port":
+                    is_input = "input" in chunk["data"]
+                    pin_name = chunk["data"]["text"][0]["text"]
+
+                    if rect is None:
+                        raise IntegrityError("Failed to load symbol: Created port before declaring component rect")
+
+                    local_xy = chunk["data"]["pt"]
+                    self.rect = rect
+
+                    xy = ( rect[0] + local_xy[0], rect[1] + local_xy[1] )
+
+                    if is_input:
+                        self.inputs[str(pin_name)] = ComponentPin(xy)
+                    else:
+                        self.outputs[str(pin_name)] = ComponentPin(xy)
+
+        else:
+            raise NotImplementedError(f"Cannot load SimulatorComponent of type: '{self.component['type']}'")
+
+    def get_pin_vcc(self, pin_name: str, is_input: bool):
+        if is_input:
+            return self.inputs[pin_name].vcc
+        else:
+            return self.outputs[pin_name].vcc
+
+    def set_pin_vcc(self, pin_name: str, is_input: bool, vcc: float | int):
+        if is_input:
+            self.inputs[pin_name].vcc = vcc
+        else:
+            self.outputs[pin_name].vcc = vcc
+
+    def get_pin_coord_map(self):
+        """ Medium computational cost, Should only be called once when building """
+        pin_map = {}
+
+        for pin_name, pin_in in self.inputs.items():
+            pin_map[pin_in.xy] = [{
+                "component": self, "pin": pin_name, "is_input": True
+            }]
+
+        for pin_name, pin_out in self.outputs.items():
+            pin_map[pin_out.xy] = [{
+                "component": self, "pin": pin_name, "is_input": False
+            }]
+
+        return pin_map
+
+    def needs_update(self):
+        return True # self.get_input_hash() != self.last_hash
+
+    def update(self):
+        if self.internal_component:
+            return self.internal_component.update()
+
+        dirty_components = []
+        if self.component_name == "pin.generic":
+            if self.is_input:
+                pin: ComponentPin = self.outputs[list(self.outputs.keys())[0]]
+                dirty_components.extend(pin.connections)
+
+        self.last_hash = self.get_input_hash()
+        return dirty_components
 
 
 class Simulator:
@@ -22,11 +204,17 @@ class Simulator:
         self.built = False
         self.status = "Off"
 
-        self.inputs = {}
-        self.outputs = {}
+        self.dirty_components = []
+        self.last_hash = -1
+
+        self.components = []
+        self.wires = []
 
         self.pin_inputs = []
         self.pin_outputs = []
+
+        self.inputs = {}
+        self.outputs = {}
 
         self.global_clock_tick = GLOBAL_CLOCK_SPEED
         self.is_root = is_root
@@ -40,94 +228,39 @@ class Simulator:
             if call >= max_calls:
                 raise IntegrityError("Simulator failed to build, Unknown reason.")
 
+        self.full_rescan()
 
-    def __generate_connection_map(self, schematic):
-        pin_lookup = {}  # Stores a coord to (id, is_input, extra) lookup
-        wire_lookup = {} # Stores a list of other connected wires
 
-        for i, component in enumerate(schematic.components):
-            component["_simulation"] = {
-                "id": i,
-                "tick": 0,
-                "connections": {
-                    "inputs": {},
-                    "outputs": {}
-                },
-                "pin_vcc": {
-                    "inputs": {},
-                    "outputs": {}
-                }
-            }
+    def build(self):
+        """ This is run once at run time to avoid expensive trace calculations every frame """
+        pin_lookup = {}
+        wire_lookup = {}
 
-            if "sub_schematic" in component:
-                sub_simulation = Simulator(component["sub_schematic"], auto_gen=True, is_root=False)
-                component["_simulation"]["sim"] = sub_simulation
+        for component in self.schematic.components:
+            comp = SimulatorComponent(component)
+            self.components.append(comp)
 
-            else:
-                if component["type"] == "pin":
-                    pass  # If input pin -> Allow changing?
-
-                elif component["type"] == "symbol":
-                    component_name = component["data"][1][0]["data"]["text"]
-
-                    if hasattr(components, component_name):
-                        component_sim = getattr(components, component_name)
-                        component["_simulation"]["sim"] = component_sim(component)
-
-                    else:
-                        print(
-                            f"[WARNING] Component '{component_name}' is not implemented, any logic connected will not update")
+            if comp.component_name == "pin.generic":
+                if comp.is_input:
+                    pin_name = list(comp.outputs.keys())[0]
+                    self.pin_inputs.append((comp, pin_name))
+                    self.inputs[pin_name] = comp
 
                 else:
-                    print(f"[WARNING] Unknown component type, cant generate sub-schematic: {component['type']}")
-
-            if component["type"] == "pin":
-                pin_name = component["data"]["text"][1]["text"]
-                rect = component["data"]["rect"]
-                rel = component["data"]["pt"]
-
-                # This bool is then inverted as if our pin is an output, it must have an input. (Stops the sim breaking)
-                is_input = "input" in component["data"]
-
-                search = (rect[0] + rel[0], rect[1] + rel[1])
-                if search not in pin_lookup:
-                    pin_lookup[search] = [(i, not is_input, {"pin_name": pin_name})]
-                else:
-                    pin_lookup[search].append((i, not is_input, {"pin_name": pin_name}))
-
-                pin_data = {
-                    "component": component,
-                    "pin_name": pin_name,
-                }
-
-                if is_input:
-                    self.pin_inputs.append(pin_data)
-                else:
-                    self.pin_outputs.append(pin_data)
+                    pin_name = list(comp.inputs.keys())[0]
+                    self.pin_outputs.append((comp, pin_name))
+                    self.outputs[pin_name] = comp
 
 
-            if component["type"] == "symbol":
-                relatives = []
-                rect = None
-                for [chunk] in component["data"]:
-                    if type(chunk) is dict and chunk["type"] == "rect":
-                        rect = chunk["data"]
+            # Generate a pin map
+            for xy, values in comp.get_pin_coord_map().items():
+                if xy not in pin_lookup:
+                    pin_lookup[xy] = []
 
-                    if type(chunk) is dict and chunk["type"] == "port":
-                        pin_name = chunk["data"]["text"][1]["text"]
-                        rel = chunk["data"]["pt"]
-                        relatives.append(
-                            (rel, "input" in chunk["data"], pin_name)
-                        )
+                pin_lookup[xy].extend(values)
 
-                for rel, pin_mode, pin_name in relatives:
-                    search = (rect[0] + rel[0], rect[1] + rel[1])
-                    if search not in pin_lookup:
-                        pin_lookup[search] = [(i, pin_mode, {"pin_name": pin_name})]
-                    else:
-                        pin_lookup[search].append((i, pin_mode, {"pin_name": pin_name}))
-
-        for wire in schematic.connections:
+        # Generate a 2-way wire map
+        for wire in self.schematic.connections:
             xy1, xy2 = tuple(wire[0]["data"]), tuple(wire[1]["data"])
 
             if xy1 not in wire_lookup:
@@ -139,22 +272,21 @@ class Simulator:
             wire_lookup[xy1].append(xy2)
             wire_lookup[xy2].append(xy1)
 
-        def search_connection(start_xy, last_xy=None):
+        def search_connection(start_xy, last_xy=None, start_comp=None):
             """ Returns a list of connected component IDs"""
             used_wires = [start_xy]
             results = []
 
             if start_xy in pin_lookup:
-                results.extend([
-                    (sub[0], sub[2])
-                    for sub in pin_lookup[start_xy]
-                ])
+                for result in pin_lookup[start_xy]:
+                    if result["component"] != start_comp:
+                        results.append(result)
 
             if start_xy in wire_lookup:
                 connections = wire_lookup[start_xy]
                 for next_xy in connections:
                     if next_xy != last_xy:
-                        search, wires = search_connection(next_xy, start_xy)
+                        search, wires = search_connection(next_xy, start_xy, start_comp)
 
                         results.extend(search)
                         used_wires.extend(wires)
@@ -164,120 +296,124 @@ class Simulator:
 
         # Generate connections
         for pin_xy, pins in pin_lookup.items():
-            for (comp_id, is_input, extra) in pins:
-                res, wires = search_connection(tuple(pin_xy))
 
-                if len(res) > 0:
-                    sim_data = schematic.components[comp_id]["_simulation"]
-                    direction = "inputs" if is_input else "outputs"
-                    pin_name = str(extra["pin_name"])
+            for pin_data in pins:
+                component1 = pin_data["component"]
 
-                    if pin_name in sim_data["connections"][direction]:
-                        raise IntegrityError("Failed to build connection map, Two or more pins share the same name.")
+                results, wires = search_connection(tuple(pin_xy), start_comp=component1)
 
-                    sim_data["pin_vcc"][direction][pin_name] = 0.00
-                    sim_data["connections"][direction][pin_name] = res
+                if len(results) > 0:
+                    is_input1 = pin_data["is_input"]
+                    pin_name1 = pin_data["pin"]
 
-                    if is_input:
-                        for wire in wires:
-                            self.wire_vcc_lookup[wire] = (comp_id, pin_name, direction)
+                    for wire in wires:
+                        pins = component1.inputs if is_input1 else component1.outputs
+                        self.wire_vcc_lookup[wire] = pins[pin_name1]
+
+                    for result in results:
+                        component2 = result["component"]
+                        is_input2 = result["is_input"]
+                        pin_name2 = result["pin"]
+
+                        wire = SimulatorWire(component1, pin_name1, component2, pin_name2)
+                        self.wires.append(wire)
+
+                        pins1 = component1.inputs if is_input1 else component1.outputs
+                        pin2 = component2.inputs if is_input2 else component2.outputs
+
+                        pins1[pin_name1].connections.append((component2, pin_name1, pin_name2))
+                        pin2[pin_name2].connections.append((component1, pin_name2, pin_name1))
 
 
-    def get_wire_vcc(self, xy1):
-        if xy1 not in self.wire_vcc_lookup:
+    def get_wire_vcc(self, start_xy):
+        if start_xy not in self.wire_vcc_lookup:
             return None
 
-        comp_id, pin_name, direction = self.wire_vcc_lookup[xy1]
-        return self.schematic.components[comp_id]["_simulation"]["pin_vcc"][direction][pin_name]
+        return self.wire_vcc_lookup[start_xy].vcc
+
+    def update_input_pin(self, component, vcc):
+        pin_name = list(component.outputs.keys())[0]
+        component.outputs[pin_name].vcc = vcc
+        self.dirty_components.append(component)
+
+    def full_rescan(self):
+        for component in self.components:
+            self.dirty_components.append(component)
+
+    def get_input_hash(self):
+        """
+            If this becomes a bottleneck look into hashing with cpython like:
+            hash(tuple(pin.vcc for pin in self.inputs.values()))
+
+            :return:
+        """
+        hv = 0
+        for component, pin_name in self.pin_inputs:
+            hv = (hv << 1) ^ int(component.outputs[pin_name].vcc)
+        return hv
+
+    def needs_update(self):
+        return self.last_hash != self.get_input_hash()
 
 
-    def __update_component(self, component):
-        """ Cascade update all inputs then compute our outputs """
-        sim_data = component["_simulation"]
+    def clone_outputs(self):
+        return [
+            (int(component.inputs[pin_name].vcc), component)
+            for component, pin_name in self.pin_outputs
+        ]
 
-        # Update component inputs
-        for pin_name, data in sim_data["connections"]["inputs"].items():
-            for (comp_id, pin_data) in data:
-                if sim_data["id"] == comp_id:
-                    continue
+    def copy_to_component_inputs(self, component):
+        simulator = component.internal_component
 
-                next_component = self.schematic.components[comp_id]
-                self.__update_pin({
-                    "component": next_component,
-                    "pin_name": pin_name,
-                })
+        for pin_name, pin_comp in component.inputs.items():
+            vcc = pin_comp.vcc
+            simulator.inputs[pin_name].outputs[pin_name].vcc = vcc
 
-        # Update component internals  - This Fucking TANKS
-        if "sim" in component["_simulation"]:
-            sim = component["_simulation"]["sim"]
-
-            if isinstance(sim, Simulator):  # Set up its inputs
-                for sim_input in sim.pin_inputs:
-                    pin_name = sim_input["pin_name"]
-
-                    vcc = component["_simulation"]["pin_vcc"]["inputs"][pin_name]
-
-                    if pin_name in sim_input["component"]["_simulation"]["pin_vcc"]["outputs"]:
-                        sim_input["component"]["_simulation"]["pin_vcc"]["outputs"][pin_name] = vcc
-
-            sim.update()
-
-            if isinstance(sim, Simulator):  # Extract its outputs
-                for sim_output in sim.pin_outputs:
-                    pin_name = str(sim_output["pin_name"])
+            simulator.dirty_components.append(simulator.inputs[pin_name])
 
 
-                    vcc = sim_output["component"]["_simulation"]["pin_vcc"]["inputs"][pin_name]
-                    component["_simulation"]["pin_vcc"]["outputs"][pin_name] = vcc
+    def copy_from_component_outputs(self, component):
+        simulator = component.internal_component
+        changed_outputs = []
 
-    def __update_pin(self, output_pin):
-        """ Recursively search to all inputs, then work back from inputs to outputs """
-        sim_data = output_pin["component"]["_simulation"]
+        for pin_name, pin_comp in component.outputs.items():
+            vcc = simulator.outputs[pin_name].inputs[pin_name].vcc
 
-        if sim_data["tick"] >= self.simulation_tick:
-            return
+            if pin_comp.vcc != vcc:
+                changed_outputs.extend(pin_comp.connections)
 
-        sim_data["tick"] = self.simulation_tick
-        for pin_name, connections in sim_data["connections"]["inputs"].items():
-            for (comp_id, pin_data) in connections:
-                component = self.schematic.components[comp_id]
-                self.__update_component(component)
+            pin_comp.vcc = vcc
 
-                # update vcc(s) down the chain
-                output_voltages = component["_simulation"]["pin_vcc"]["outputs"]
-                for output_pin, output_connections in component["_simulation"]["connections"]["outputs"].items():
-                    pin_voltage = output_voltages[output_pin]
-
-                    for output_connection in output_connections:
-                        next_component = self.schematic.components[output_connection[0]]
-                        next_pin_name = str(output_connection[1]["pin_name"])
-
-                        if next_pin_name in next_component["_simulation"]["pin_vcc"]["inputs"]:
-                            next_component["_simulation"]["pin_vcc"]["inputs"][next_pin_name] = pin_voltage
-
-
-    def update_inputs(self):
-        self.global_clock_tick -= 1
-
-        for pin_input in self.pin_inputs:
-            if 'CLK' in pin_input["component"]["_simulation"]["pin_vcc"]["outputs"]:
-                if self.global_clock_tick == 0:
-                    value = pin_input["component"]["_simulation"]["pin_vcc"]["outputs"]["CLK"]
-                    pin_input["component"]["_simulation"]["pin_vcc"]["outputs"]["CLK"] = 1 - value
-
-        # Update Clocks
-        if self.global_clock_tick == 0:
-            self.global_clock_tick = GLOBAL_CLOCK_SPEED
-
+        return changed_outputs
 
     def update_simulation(self):
-        if self.is_root:
-            self.update_inputs()
+        queue = deque(self.dirty_components)
+        self.dirty_components.clear()
 
-        for output_pin in self.pin_outputs:
-            self.__update_pin(output_pin)
+        while queue:
+            component = queue.popleft()
 
+            if not component.needs_update():
+                continue
+
+            if component.has_sub_schematic:
+                self.copy_to_component_inputs(component)
+
+            changed_outputs = component.update()
+
+            if component.has_sub_schematic:
+                changed_outputs = self.copy_from_component_outputs(component)
+
+            for next_comp, output_pin, input_pin in changed_outputs:
+                if next_comp.tick < self.simulation_tick and component.outputs[output_pin].vcc != next_comp.inputs[input_pin].vcc:
+                    next_comp.inputs[input_pin].vcc = component.outputs[output_pin].vcc
+                    queue.append(next_comp)
+
+
+        self.last_hash = self.get_input_hash()
         self.simulation_tick += 1
+
+        return None
 
 
     def update(self):
@@ -286,10 +422,21 @@ class Simulator:
 
         elif not self.built and self.status == "Building":
             start = time.time()
-            self.__generate_connection_map(self.schematic)
+            self.build()
             end = time.time()
-            self.status = f"On (built in {round((end - start) * 1000)}ms)"
-            self.built = True
+            self.status = f"Building (built in {round((end - start) * 1000)}ms)"
+            self.built = False
 
-        else:
+        elif self.status.startswith("Building"):
+            start = time.time()
+
             self.update_simulation()
+            self.full_rescan()
+
+            end = time.time()
+            self.status = f"On (Restarted in {round((end - start) * 1000)}ms)"
+            self.built = True
+        else:
+            return self.update_simulation()
+
+        return None
