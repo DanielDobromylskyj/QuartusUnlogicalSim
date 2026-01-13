@@ -8,11 +8,6 @@ from . import components
 """
 Simulator V2
 
->>       Major  Todos         <<
-
-Make sub-schematics work / load again
-Make it simulate
-
 >>   Possible Optimisations   <<
 
 Replace dicts with lists / tuples where possible
@@ -40,6 +35,13 @@ class SimulatorWire:
 class ComponentPin:
     def __init__(self, xy):
         self.connections = []
+
+        self.last_clk = 0
+        self.settings = {
+            "is_clock": False,
+            "clock_speed_hz": 0,
+            "is_toggle": False,
+        }
 
         self.vcc = 0.0
         self.xy = xy
@@ -216,6 +218,8 @@ class Simulator:
         self.inputs = {}
         self.outputs = {}
 
+        self.clocks = []
+
         self.global_clock_tick = GLOBAL_CLOCK_SPEED
         self.is_root = is_root
 
@@ -386,7 +390,20 @@ class Simulator:
 
         return changed_outputs
 
+    def update_clocks(self):
+        current_time = time.time()
+        for component, pin_comp in self.clocks:  # Component should be an input pin ONLY
+            ms = 1 / pin_comp.settings["clock_speed_hz"]
+
+            if current_time - ms > pin_comp.last_clk:
+                pin_comp.last_clk = current_time
+                pin_comp.vcc = 1 - pin_comp.vcc
+
+                self.dirty_components.append(component)
+
     def update_simulation(self):
+        self.update_clocks()
+
         queue = deque(self.dirty_components)
         self.dirty_components.clear()
 

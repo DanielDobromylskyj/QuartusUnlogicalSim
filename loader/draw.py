@@ -1,6 +1,4 @@
 import os.path
-import random
-
 import pygame
 import math
 
@@ -63,7 +61,7 @@ class Render:
         self.clock = pygame.time.Clock()
 
         self.schematics = [schematic]
-        self.simulator = simulator
+        self.simulators = [simulator]
 
         self.static_components = []
         self.__pregenerate()
@@ -100,13 +98,19 @@ class Render:
     def schematic(self):
         return self.schematics[-1]
 
+    @property
+    def simulator(self):
+        return self.simulators[-1]
+
     def back_one_schematic(self):
         if len(self.schematics) > 1:
             self.schematics.pop(-1)
+            self.simulators.pop(-1)
             self.__pregenerate()
 
-    def add_one_schematic(self, schematic):
-        self.schematics.append(schematic)
+    def add_one_schematic(self, simulator):
+        self.schematics.append(simulator.schematic)
+        self.simulators.append(simulator)
         self.__pregenerate()
 
     def __pregenerate(self):
@@ -336,7 +340,7 @@ class Render:
                         if (rect[0] < x < rect[2]) and (rect[1] < y < rect[3]):
                             if component.component_name != "pin.generic":
                                 if isinstance(component.internal_component, Simulator):
-                                    self.add_one_schematic(component.internal_component.schematic)
+                                    self.add_one_schematic(component.internal_component)
 
 
                 if event.button == 1:
