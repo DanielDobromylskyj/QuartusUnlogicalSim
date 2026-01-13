@@ -23,6 +23,7 @@ HELP_TEXT = """
 > Simulation
     Reload Files: ctrl + r
     Force update: r
+    Clear Cache(s): c
 
 > Sub Simulations
     View Component: Left Click 
@@ -519,6 +520,12 @@ class Render:
         self.clickable.extend(buttons)
         return surface
 
+    def clear_cache(self):
+        for simulator in self.simulators:
+            simulator.clear_cache()
+
+        self.font_cache = {}
+
     def update(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -541,6 +548,9 @@ class Render:
                         self.simulator.reload()
                     else:
                         self.simulator.full_rescan()
+
+                if event.key == pygame.K_c:
+                    self.clear_cache()
 
             if event.type == pygame.MOUSEMOTION:
                 if event.buttons[0]:

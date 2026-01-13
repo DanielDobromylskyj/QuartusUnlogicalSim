@@ -472,6 +472,9 @@ class Simulator:
 
         return None
 
+    def clear_cache(self):
+        pass  # We don't have any caches at the moment
+
     def reload(self):
         start = time.time()
         self.connection_map = {}
