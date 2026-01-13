@@ -1,4 +1,6 @@
 import os.path
+import time
+
 import pygame
 import math
 
@@ -78,6 +80,10 @@ class Render:
         self.MIN_ZOOM = 0.2
         self.MAX_ZOOM = 5.0
 
+        self.zoom_wait_time = 1  # s
+        self.last_zoom_time = 0
+        self.last_static_zoom = self.zoom
+
         self.mouse_dragging = False
         self.target_fps = 120
 
@@ -87,7 +93,16 @@ class Render:
         # We no longer scale it here, but I cba to remove this function
         sx, sy = self.world_to_screen(*xy)
 
-        self.screen.blit(surface, (sx, sy))
+        if self.zoom == self.last_static_zoom:
+            self.screen.blit(surface, (sx, sy))
+
+        else:
+            tw = surface.get_width() * (self.zoom / self.last_static_zoom)
+            th = surface.get_height() * (self.zoom / self.last_static_zoom)
+
+            scaled = pygame.transform.smoothscale(surface, (tw, th))
+
+            self.screen.blit(scaled, (sx, sy))
 
     def screen_to_world(self, x, y):
         return (
@@ -525,9 +540,13 @@ class Render:
                 self.pan_offset[0] = int(mx - (mx - self.pan_offset[0]) * (self.zoom / old_zoom))
                 self.pan_offset[1] = int(my - (my - self.pan_offset[1]) * (self.zoom / old_zoom))
 
-                self.__fast_generate()
+                self.last_zoom_time = time.time()
 
         self.screen.fill(self.BACKGROUND_COLOUR)
+
+        if self.last_static_zoom != self.zoom and self.last_zoom_time + self.zoom_wait_time <= time.time():
+            self.__fast_generate()
+            self.last_static_zoom = self.zoom
 
         for i, component in enumerate(self.schematic.components):
             rect = self.get_rect(component)

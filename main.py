@@ -7,6 +7,20 @@ from loader import simulator2
 
 schem = Schematic("test_data/quartus/main.bdf")
 
+"""
+>> TODO LIST
+
+- File Selection
+
+- Robustness
+  - Clock Speed Selection -> Dont allow 0 -> Errors
+  
+- Performance
+  - Faster Zooming -> Currently redraws for every zoom change, make it do a temp zoom until user stops changing zoom
+
+"""
+
+
 
 simulator = simulator2.Simulator(schem)
 preview = Renderer(schem, simulator)
