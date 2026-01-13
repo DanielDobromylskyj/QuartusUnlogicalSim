@@ -2,6 +2,9 @@ import os.path
 import pygame
 import math
 
+import tkinter as tk
+from tkinter import simpledialog
+
 from .simulator2 import Simulator
 
 DEFAULT_FONT_SIZE = 8
@@ -68,6 +71,7 @@ class Render:
 
         self.pin_settings_menu = None
         self.pin_settings_ref = None
+        self.clickable = []
 
         self.pan_offset = [0, 0]
         self.zoom = 1.0
@@ -316,6 +320,115 @@ class Render:
         surface = pygame.Surface((400, self.screen.get_height()))
         surface.fill((40, 40, 40))
 
+        pin_name = list(component.outputs.keys())[0]
+        pin_comp = component.outputs[pin_name]
+        config = pin_comp.settings
+
+        surf = self.font.render("Toggle", True, (255, 255, 255))
+        toggle_button = pygame.Surface((surf.get_width() + 4, surf.get_height() + 4))
+        toggle_button.fill((25, 25, 25))
+        toggle_button.blit(surf, (2, 2))
+
+        surf = self.font.render("Set", True, (255, 255, 255))
+        set_button = pygame.Surface((surf.get_width() + 4, surf.get_height() + 4))
+        set_button.fill((25, 25, 25))
+        set_button.blit(surf, (2, 2))
+
+        surf = self.font.render("Close", True, (255, 255, 255))
+        close_button = pygame.Surface((surf.get_width() + 4, surf.get_height() + 4))
+        close_button.fill((25, 25, 25))
+        close_button.blit(surf, (2, 2))
+        surface.blit(close_button, (surface.get_width() - (close_button.get_width() + 5), 5))
+
+        buttons = []
+
+        def close_menu():
+            self.pin_settings_menu = None
+            self.pin_settings_ref = None
+
+            for button in buttons:
+                if button in self.clickable:
+                    self.clickable.remove(button)
+
+        def toggle_pin_mode():
+            config["is_toggle"] = not config["is_toggle"]
+            close_menu()
+            self.pin_settings_menu = self.generate_pin_settings_menu(component)
+
+        def toggle_is_clock():
+            config["is_clock"] = not config["is_clock"]
+
+            if config["is_clock"]:
+                self.simulator.clocks.append((component, pin_comp))
+            else:
+                self.simulator.clocks.remove((component, pin_comp))
+
+            close_menu()
+            self.pin_settings_menu = self.generate_pin_settings_menu(component)
+
+        def set_clock_speed():
+            close_menu()
+
+            root = tk.Tk()
+            root.withdraw()  # hide the main Tk window
+
+            value = simpledialog.askinteger(
+                title="Clock Speed",
+                prompt="Enter clock speed (hz):",
+                minvalue=0
+            )
+
+            root.destroy()
+
+            if value is not None:
+                config["clock_speed_hz"] = value
+
+            close_menu()
+            self.pin_settings_menu = self.generate_pin_settings_menu(component)
+
+        surf = self.font.render(f"Settings Menu", True, (255, 255, 255))
+        surface.blit(surf, (5, 5))
+
+        surf = self.font.render(f"{component} ({component.component_name})", True, (255, 255, 255))
+        surface.blit(surf, (5, 30))
+
+        surf = self.font.render(f"Mode: {'Toggle' if config['is_toggle'] else 'Hold'}", True, (255, 255, 255))
+        surface.blit(surf, (5, 70))
+        surface.blit(toggle_button, (surface.get_width() - (toggle_button.get_width() + 5), 68))
+
+        buttons.append((
+            (surface.get_width() - (toggle_button.get_width() + 5), 68),
+            toggle_button.get_size(),
+            toggle_pin_mode
+        ))
+
+        surf = self.font.render(f"Is Clock: {config['is_clock']}", True, (255, 255, 255))
+        surface.blit(surf, (5, 95))
+        surface.blit(toggle_button, (surface.get_width() - (toggle_button.get_width() + 5), 93))
+
+        buttons.append((
+            (surface.get_width() - (toggle_button.get_width() + 5), 93),
+            toggle_button.get_size(),
+            toggle_is_clock
+        ))
+
+        surf = self.font.render(f"Clock Speed: {config['clock_speed_hz']}hz", True, (255, 255, 255))
+        surface.blit(surf, (5, 120))
+        surface.blit(set_button, (surface.get_width() - (set_button.get_width() + 5), 118))
+
+        buttons.append((
+            (surface.get_width() - (set_button.get_width() + 5), 118),
+            set_button.get_size(),
+            set_clock_speed
+        ))
+
+        buttons.append((
+            (surface.get_width() - (close_button.get_width() + 5), 5),
+            close_button.get_size(),
+            close_menu
+        ))
+
+        self.clickable.extend(buttons)
         return surface
 
     def update(self):
@@ -368,6 +481,17 @@ class Render:
                 y = (event.pos[1] - self.pan_offset[1]) / self.zoom
 
                 if event.button == 1:
+                    if self.pin_settings_menu and event.pos[0] > self.screen.get_width() - self.pin_settings_menu.get_width():
+                        offset = self.screen.get_width() - self.pin_settings_menu.get_width()
+                        for clickable in self.clickable:
+                            (x1, y1), (w, h), func = clickable
+                            x1 += offset
+
+                            if x1 < event.pos[0] < x1 + w and y1 < event.pos[1] < y1 + h:
+                                func()
+                                break
+
+
                     for component in self.simulator.components:
                         rect = component.rect
 

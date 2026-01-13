@@ -336,7 +336,12 @@ class Simulator:
         return self.wire_vcc_lookup[start_xy].vcc
 
     def update_input_pin(self, component, vcc):
-        pin_name = list(component.outputs.keys())[0]
+        pins = list(component.outputs.keys())
+
+        if len(pins) == 0:
+            return
+
+        pin_name = pins[0]
         pin_comp = component.outputs[pin_name]
         self.dirty_components.append(component)
 
