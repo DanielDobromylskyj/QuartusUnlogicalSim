@@ -40,7 +40,7 @@ class ComponentPin:
         self.settings = {
             "is_clock": False,
             "clock_speed_hz": 0,
-            "is_toggle": False,
+            "is_toggle": True,
         }
 
         self.vcc = 0.0
@@ -337,8 +337,14 @@ class Simulator:
 
     def update_input_pin(self, component, vcc):
         pin_name = list(component.outputs.keys())[0]
-        component.outputs[pin_name].vcc = vcc
+        pin_comp = component.outputs[pin_name]
         self.dirty_components.append(component)
+
+        if pin_comp.settings["is_toggle"]:
+            if vcc == 1:
+                pin_comp.vcc = 1 - pin_comp.vcc
+        else:
+            pin_comp.vcc = vcc
 
     def full_rescan(self):
         for component in self.components:

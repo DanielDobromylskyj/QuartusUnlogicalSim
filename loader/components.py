@@ -80,6 +80,13 @@ class AND3(Component):
     def calculate_outputs(self):
         self.outputs["OUT"].vcc = self.inputs["IN1"].vcc * self.inputs["IN2"].vcc * self.inputs["IN3"].vcc
 
+class AND4(Component):
+    def __init__(self, component):
+        super().__init__(component)
+
+    def calculate_outputs(self):
+        self.outputs["OUT"].vcc = self.inputs["IN1"].vcc * self.inputs["IN2"].vcc * self.inputs["IN3"].vcc * self.inputs["IN4"].vcc
+
 
 class OR2(Component):
     def __init__(self, component):

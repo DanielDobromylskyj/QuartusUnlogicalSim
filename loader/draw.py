@@ -66,6 +66,9 @@ class Render:
         self.static_components = []
         self.__pregenerate()
 
+        self.pin_settings_menu = None
+        self.pin_settings_ref = None
+
         self.pan_offset = [0, 0]
         self.zoom = 1.0
         self.MIN_ZOOM = 0.2
@@ -245,11 +248,15 @@ class Render:
                         for text in data["text"]:
                             x, y, tw, th = text["rect"]
 
-                            font = pygame.sysfont.SysFont(text["font"]["name"],
-                                                          int(text["font"].get("size", DEFAULT_FONT_SIZE) * self.zoom))
-                            text_surf = font.render(text["text"], True, self.COMPONENT_COLOUR)
+                            try:
+                                font = pygame.sysfont.SysFont(text["font"]["name"],
+                                                              int(text["font"].get("size", DEFAULT_FONT_SIZE) * self.zoom))
+                                text_surf = font.render(text["text"], True, self.COMPONENT_COLOUR)
 
-                            surface.blit(text_surf, (x * zoom, y * zoom))
+                                surface.blit(text_surf, (x * zoom, y * zoom))
+
+                            except TypeError:
+                                print("[WARNING] Attempted to render non unicode text")
 
 
                     if chunk[0]["type"] == "text":
@@ -304,6 +311,12 @@ class Render:
 
         pygame.display.flip()
         self.clock.tick(120)
+
+    def generate_pin_settings_menu(self, component):
+        surface = pygame.Surface((400, self.screen.get_height()))
+        surface.fill((40, 40, 40))
+
+        return surface
 
     def update(self):
         for event in pygame.event.get():
@@ -360,6 +373,17 @@ class Render:
 
                         if (rect[0] < x < rect[2]) and (rect[1] < y < rect[3]):
                             self.simulator.update_input_pin(component, 1)
+
+                if event.button == 3:
+                    for component in self.simulator.components:
+                        if not (component.component_name == "pin.generic" and component.is_input):
+                            continue
+
+                        rect = component.rect
+
+                        if (rect[0] < x < rect[2]) and (rect[1] < y < rect[3]):
+                            self.pin_settings_menu = self.generate_pin_settings_menu(component)
+                            self.pin_settings_ref = component
 
             if event.type == pygame.MOUSEWHEEL:
                 old_zoom = self.zoom
@@ -419,6 +443,9 @@ class Render:
                 self.world_to_screen(x2, y2),
                 max(1, int(self.zoom))
             )
+
+        if self.pin_settings_menu:
+            self.screen.blit(self.pin_settings_menu, (self.screen.get_width() - self.pin_settings_menu.get_width(), 0))
 
 
         # Render overlay
