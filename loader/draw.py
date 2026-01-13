@@ -24,6 +24,10 @@ HELP_TEXT = """
     Reload Files: ctrl + r
     Force update: r
 
+> Sub Simulations
+    View Component: Left Click 
+    Exit Component: Escape
+
 > Input Pins
     Open Setting: Right Click
     
